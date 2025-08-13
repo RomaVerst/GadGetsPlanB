@@ -1,0 +1,16 @@
+.plan-b-requests__wrapper {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+.plan-b-requests .sub-title {
+    font-weight: bolder;
+    margin: 5px 0 5px;
+}
+.plan-b-requests .item-group {
+    width: calc(100% / 5 - 4px);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    text-align: center;
+}
