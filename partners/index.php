@@ -81,7 +81,7 @@ if ($cache->initCache($cacheTtl, $cacheKey, $cachePath)) {
 
     foreach ($items as $item) {
         $requestKeyInit = ($item['STATUS_REQUEST_VALUE'] === 'success')
-            ? 'OPEN' : 'CLOSED';
+            ? 'CLOSED' : 'OPEN';
         $requestKeyInit .= (!empty($item['LEGAL_STATUS_VALUE']) && $item['LEGAL_STATUS_VALUE'] === 'Y')
             ? '%LEGAL' : '%INDIVIDUAL';
 
