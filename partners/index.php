@@ -4,7 +4,11 @@ use Bitrix\Main\Loader,
     Bitrix\Main\Localization\Loc,
     Bitrix\Main\Type\DateTime,
     Bitrix\Main\Data\Cache,
-    Bitrix\Main\Application;
+    Bitrix\Main\Application,
+    Bitrix\Iblock\PropertyTable,
+    Bitrix\Iblock\ElementPropertyTable,
+    Bitrix\Iblock\PropertyEnumerationTable,
+    Bitrix\Highloadblock\HighloadBlockTable;
 
 if (!defined("B_PROLOG_INCLUDED") || B_PROLOG_INCLUDED !== true) {
     die();
@@ -16,7 +20,14 @@ global $APPLICATION;
 if (!Loader::includeModule('iblock')) {
     return;
 }
+if (!Loader::includeModule('highloadblock')) {
+    return;
+}
 
+if (empty($arGadgetParams['IBLOCK_TYPE'])) {
+    echo Loc::getMessage('PB_GADGETS_IBLOCK_TYPE_NOT_FOUND');
+    return;
+}
 if (empty($arGadgetParams['IBLOCK_ID'])) {
     echo Loc::getMessage('PB_GADGETS_IBLOCK_ID_NOT_FOUND');
     return;
@@ -24,34 +35,77 @@ if (empty($arGadgetParams['IBLOCK_ID'])) {
 
 $APPLICATION->SetAdditionalCSS('/bitrix/gadgets/planb/partners/styles.css');
 
-// Закэшируем данные в тегированный кэш, чтобы кэш менялся при обновлении элементов инфоблока
-
 $cache = Cache::createInstance();
-$taggedCache = Application::getInstance()->getTaggedCache();
 
 $cachePath = $cacheKey = 'pb_requests_partners';
 $cacheTtl = 36000;
 
+// Для ссылок нам нужны id статусов в hl блоке, поэтому выберем их и запишем в кеш
+if ($cache->initCache($cacheTtl, "pb_requests_hl_elements")) {
+    $hlElements = $cache->getVars();
+} elseif ($cache->startDataCache()) {
+    $hlblock = HighloadBlockTable::getList([
+        'filter' => ['=NAME' => $arGadgetParams['HL_NAME'] ?? 'Financestatuses']
+    ])->fetch();
+
+    if (empty($hlblock)) {
+        echo Loc::getMessage('PB_GADGETS_HL_NOT_FOUND');
+    }
+
+    $entity = HighloadBlockTable::compileEntity($hlblock);
+    $dataClass = $entity->getDataClass();
+    $hlElements = [];
+
+    $hlDb = $dataClass::getList([
+        'select' => ['ID', 'UF_XML_ID']
+    ]);
+    while ($hlElement = $hlDb->fetch()) {
+        $hlElements[$hlElement['UF_XML_ID']] = $hlElement['ID'];
+    }
+
+    $cache->endDataCache($hlElements);
+}
+
+if (empty($hlElements)) {
+    echo Loc::getMessage('PB_GADGETS_HL_ELEMENTS_NOT_FOUND');
+    return;
+}
+
+// Выбираем все данные из инфоблока за текущий месяц и запишем в кеш
+// Закешируем данные в тегированный кеш, чтобы кеш менялся при обновлении элементов инфоблока
+$taggedCache = Application::getInstance()->getTaggedCache();
 if ($cache->initCache($cacheTtl, $cacheKey, $cachePath)) {
-    $partnersRequests = $cache->getVars();
+    $partnersInfo = $cache->getVars();
 } elseif ($cache->startDataCache()) {
 
     $iblockClassRequests = \Bitrix\Iblock\Iblock::wakeUp($arGadgetParams['IBLOCK_ID'])->getEntityDataClass();
     $taggedCache->startTagCache($cachePath);
     $currentMonthStart = DateTime::createFromPhp(new \DateTime(date('Y-m-01 00:00:00')));
-    $currentMonthEnd   = DateTime::createFromPhp(new \DateTime(date('Y-m-t 23:59:59')));
+    $currentMonthEnd = DateTime::createFromPhp(new \DateTime(date('Y-m-t 23:59:59')));
 
-    // Выбираем все данные из инфоблока за текущий месяц, включая значения списочных свойств
+
+    // Получаем ID свойства по коду и ID инфоблока
+    $prop = PropertyTable::getList([
+        'filter' => [
+            'IBLOCK_ID' => $arGadgetParams['IBLOCK_ID'],
+            'CODE' => 'STAT_IS_LEGAL'
+        ],
+        'select' => ['ID']
+    ])->fetch();
+
+    if (empty($prop['ID'])) {
+        echo Loc::getMessage('PB_GADGETS_PROPERTY_NOT_FOUND');
+        return;
+    }
+
     $items = $iblockClassRequests::getList([
         'select' => [
             'ID',
             'NAME',
             'SORT',
             'DATE_CREATE',
-            'STAT_IS_LEGAL_' => 'STAT_IS_LEGAL',
-            'STATUS_ID_' => 'STATUS',
-            'STATUS_REQUEST_VALUE' => 'STATUS_REQUEST.VALUE',
-            'LEGAL_STATUS_VALUE' => 'LEGAL_STATUS.VALUE',
+            'STAT_IS_LEGAL_VALUE' => 'STAT_IS_LEGAL_ENUM.VALUE',
+            'STATUS_REQUEST_' => 'STATUS',
             'IBLOCK_ID'
         ],
         'filter' => [
@@ -59,17 +113,18 @@ if ($cache->initCache($cacheTtl, $cacheKey, $cachePath)) {
             '<=DATE_CREATE' => $currentMonthEnd,
         ],
         'runtime' => [
-            'STATUS_REQUEST' => [
-                'data_type' => '\Bitrix\Iblock\PropertyEnumerationTable',
+            'STAT_IS_LEGAL_PROP' => [
+                'data_type' => ElementPropertyTable::class,
                 'reference' => [
-                    '=this.STATUS.VALUE' => 'ref.ID',
+                    '=this.ID' => 'ref.IBLOCK_ELEMENT_ID',
+                    '=ref.IBLOCK_PROPERTY_ID' => new \Bitrix\Main\DB\SqlExpression('?i', (int)$prop['ID']),
                 ],
                 'join_type' => 'left'
             ],
-            'LEGAL_STATUS' => [
-                'data_type' => '\Bitrix\Iblock\PropertyEnumerationTable',
+            'STAT_IS_LEGAL_ENUM' => [
+                'data_type' => PropertyEnumerationTable::class,
                 'reference' => [
-                    '=this.STAT_IS_LEGAL.VALUE' => 'ref.ID',
+                    '=this.STAT_IS_LEGAL_PROP.VALUE_ENUM' => 'ref.ID',
                 ],
                 'join_type' => 'left'
             ],
@@ -77,9 +132,15 @@ if ($cache->initCache($cacheTtl, $cacheKey, $cachePath)) {
         'order' => ['SORT' => 'ASC'],
     ])->fetchAll();
 
-    $partnersRequests = [];
+    $partnersInfo = [
+        'PARTNERS_REQUESTS' => [],
+        'STATUS_PROPERTY_ID' => 0
+    ];
 
     foreach ($items as $item) {
+        if (!$partnersInfo['STATUS_PROPERTY_ID']) {
+            $partnersInfo['STATUS_PROPERTY_ID'] = (int)$item['STATUS_REQUEST_IBLOCK_PROPERTY_ID'];
+        }
         $requestKeyInit = ($item['STATUS_REQUEST_VALUE'] === 'success')
             ? 'CLOSED' : 'OPEN';
         $requestKeyInit .= (!empty($item['LEGAL_STATUS_VALUE']) && $item['LEGAL_STATUS_VALUE'] === 'Y')
@@ -98,26 +159,29 @@ if ($cache->initCache($cacheTtl, $cacheKey, $cachePath)) {
             ->setTime(23, 59, 59);
 
         if ($item['DATE_CREATE']->format('Ymd') === $now->format('Ymd')) {
-            $partnersRequests[$requestKeyInit . '%CUR_DAY']++;
+            $partnersInfo['PARTNERS_REQUESTS'][$requestKeyInit . '%CUR_DAY']++;
         }
         if ($item['DATE_CREATE'] >= $weekStart && $item['DATE_CREATE'] <= $weekEnd) {
-            $partnersRequests[$requestKeyInit . '%CUR_WEEK']++;
+            $partnersInfo['PARTNERS_REQUESTS'][$requestKeyInit . '%CUR_WEEK']++;
         }
         if ($item['DATE_CREATE']->format('Ym') === $now->format('Ym')) {
-            $partnersRequests[$requestKeyInit . '%CUR_MONTH']++;
+            $partnersInfo['PARTNERS_REQUESTS'][$requestKeyInit . '%CUR_MONTH']++;
         }
 
-        $partnersRequests[$requestKeyInit . '%ALL']++;
+        $partnersInfo['PARTNERS_REQUESTS'][$requestKeyInit . '%ALL']++;
     }
 
     // Кеш сбрасывать при изменении данных в инфоблоке с ID $arGadgetParams['IBLOCK_ID']
     $taggedCache->registerTag('iblock_id_' . $arGadgetParams['IBLOCK_ID']);
-
     $taggedCache->endTagCache();
-    $cache->endDataCache($partnersRequests);
+    $cache->endDataCache($partnersInfo);
 }
 
-if (!empty($partnersRequests)):
+if (!empty($partnersInfo['PARTNERS_REQUESTS']) && !empty($partnersInfo['STATUS_PROPERTY_ID'])):
+    $partnersRequests = $partnersInfo['PARTNERS_REQUESTS'];
+    $url = '/bitrix/admin/iblock_list_admin.php?IBLOCK_ID=' . $arGadgetParams['IBLOCK_ID']
+        . '&type=' . $arGadgetParams['IBLOCK_TYPE'] . '&lang=' . LANGUAGE_ID
+        . '&find_section_section=0&SECTION_ID=0';
     ?>
     <div class="bx-gadgets-info plan-b-requests">
         <div class="plan-b-requests__wrapper">
@@ -128,7 +192,12 @@ if (!empty($partnersRequests)):
             <div class="item-group"><?= Loc::getMessage('PB_GADGETS_ALL') ?></div>
         </div>
 
-        <div class="sub-title"><?= Loc::getMessage('PB_GADGETS_CLOSED_REQUESTS') ?></div>
+        <div class="sub-title">
+            <a href="<?= $url  ?>" class="link-list"
+               data-iblock-list="success">
+                <?= Loc::getMessage('PB_GADGETS_CLOSED_REQUESTS') ?>
+            </a>
+        </div>
         <div class="plan-b-requests__wrapper">
             <div class="item-group">
                 <div><?= Loc::getMessage('PB_GADGETS_INDIVIDUAL') ?></div>
@@ -161,7 +230,12 @@ if (!empty($partnersRequests)):
                 <div><?= $partnersRequests['CLOSED%LEGAL%ALL'] ?? 0 ?></div>
             </div>
         </div>
-        <div class="sub-title"><?= Loc::getMessage('PB_GADGETS_OPEN_REQUESTS') ?></div>
+        <div class="sub-title">
+            <a href="<?= $url  ?>" class="link-list"
+               data-iblock-list="wait,send">
+                <?= Loc::getMessage('PB_GADGETS_OPEN_REQUESTS') ?>
+            </a>
+        </div>
         <div class="plan-b-requests__wrapper">
             <div class="item-group">
                 <div><?= Loc::getMessage('PB_GADGETS_INDIVIDUAL') ?></div>
@@ -196,6 +270,44 @@ if (!empty($partnersRequests)):
             </div>
         </div>
     </div>
+    <script>
+        // Отправка запроса на изменение фильтра в элементах инфоблока для ссылок
+        BX.ready(() => {
+            BX.bindDelegate(
+                document.body, 'click', {className: 'link-list'},
+                function (e) {
+                    BX.PreventDefault(e);
+                    const link = e.target;
+                    let statuses = link.getAttribute('data-iblock-list');
+                    if (statuses.length === 0) {
+                        return;
+                    }
+
+                    BX.ajax({
+                        url: '/bitrix/gadgets/planb/partners/ajax.php',
+                        data: {
+                            'property': '<?= $partnersInfo['STATUS_PROPERTY_ID'] ?>',
+                            'statuses': statuses.split(','),
+                            'type': '<?= $arGadgetParams['IBLOCK_TYPE'] ?>',
+                            'iblockId': '<?= $arGadgetParams['IBLOCK_ID'] ?>',
+                        },
+                        method: 'POST',
+                        dataType: 'json',
+                        onsuccess: function(data){
+                            if (data.success) {
+                                location.href = link.getAttribute('href');
+                            } else {
+                                console.log(data.error);
+                            }
+                        },
+                        onfailure: function(error){
+                            console.error(error);
+                        }
+                    });
+                }
+            );
+        })
+    </script>
 <?php
 endif;
 

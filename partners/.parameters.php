@@ -37,8 +37,15 @@ $arParameters = [
             "VALUES" => $ibTypes,
             "MULTIPLE" => "N",
             "DEFAULT" => array_key_first($ibTypes),
-            "REFRESH" => "Y"
-        ]
+            "REFRESH" => "Y",
+        ],
+        "HL_NAME" => [
+            "NAME" => Loc::getMessage("PB_GADGETS_IBLOCK_TYPE"),
+            "TYPE" => "STRING",
+            "VALUES" => $ibTypes,
+            "MULTIPLE" => "N",
+            "DEFAULT" => 'Financestatuses',
+        ],
     ]
 ];
 
