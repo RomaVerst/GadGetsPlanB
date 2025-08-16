@@ -40,7 +40,7 @@ $arParameters = [
             "REFRESH" => "Y",
         ],
         "HL_NAME" => [
-            "NAME" => Loc::getMessage("PB_GADGETS_IBLOCK_TYPE"),
+            "NAME" => Loc::getMessage("PB_GADGETS_HL_ENTITY"),
             "TYPE" => "STRING",
             "VALUES" => $ibTypes,
             "MULTIPLE" => "N",

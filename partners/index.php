@@ -33,6 +33,7 @@ if (empty($arGadgetParams['IBLOCK_ID'])) {
     return;
 }
 
+//$APPLICATION->SetAdditionalCSS('/local/gadgets/planb/prog8/styles.css');
 $APPLICATION->SetAdditionalCSS('/bitrix/gadgets/planb/partners/styles.css');
 
 $cache = Cache::createInstance();
@@ -84,16 +85,20 @@ if ($cache->initCache($cacheTtl, $cacheKey, $cachePath)) {
     $currentMonthEnd = DateTime::createFromPhp(new \DateTime(date('Y-m-t 23:59:59')));
 
 
-    // Получаем ID свойства по коду и ID инфоблока
-    $prop = PropertyTable::getList([
+    // Получаем ID свойств по коду и ID инфоблока
+    $props = [];
+    $propDb = PropertyTable::getList([
         'filter' => [
             'IBLOCK_ID' => $arGadgetParams['IBLOCK_ID'],
-            'CODE' => 'STAT_IS_LEGAL'
+            'CODE' => ['STAT_IS_LEGAL', 'STATUS']
         ],
-        'select' => ['ID']
-    ])->fetch();
+        'select' => ['ID', 'CODE']
+    ]);
+    while ($prop = $propDb->fetch()) {
+        $props[$prop['CODE']] = $prop['ID'];
+    }
 
-    if (empty($prop['ID'])) {
+    if (empty($props['STAT_IS_LEGAL'])) {
         echo Loc::getMessage('PB_GADGETS_PROPERTY_NOT_FOUND');
         return;
     }
@@ -117,7 +122,7 @@ if ($cache->initCache($cacheTtl, $cacheKey, $cachePath)) {
                 'data_type' => ElementPropertyTable::class,
                 'reference' => [
                     '=this.ID' => 'ref.IBLOCK_ELEMENT_ID',
-                    '=ref.IBLOCK_PROPERTY_ID' => new \Bitrix\Main\DB\SqlExpression('?i', (int)$prop['ID']),
+                    '=ref.IBLOCK_PROPERTY_ID' => new \Bitrix\Main\DB\SqlExpression('?i', (int)$props['STAT_IS_LEGAL']),
                 ],
                 'join_type' => 'left'
             ],
@@ -134,13 +139,10 @@ if ($cache->initCache($cacheTtl, $cacheKey, $cachePath)) {
 
     $partnersInfo = [
         'PARTNERS_REQUESTS' => [],
-        'STATUS_PROPERTY_ID' => 0
+        'STATUS_PROPERTY_ID' => $props['STATUS']
     ];
 
     foreach ($items as $item) {
-        if (!$partnersInfo['STATUS_PROPERTY_ID']) {
-            $partnersInfo['STATUS_PROPERTY_ID'] = (int)$item['STATUS_REQUEST_IBLOCK_PROPERTY_ID'];
-        }
         $requestKeyInit = ($item['STATUS_REQUEST_VALUE'] === 'success')
             ? 'CLOSED' : 'OPEN';
         $requestKeyInit .= (!empty($item['LEGAL_STATUS_VALUE']) && $item['LEGAL_STATUS_VALUE'] === 'Y')
@@ -285,6 +287,7 @@ if (!empty($partnersInfo['PARTNERS_REQUESTS']) && !empty($partnersInfo['STATUS_P
 
                     BX.ajax({
                         url: '/bitrix/gadgets/planb/partners/ajax.php',
+                        // url: '/local/gadgets/planb/prog8/ajax.php',
                         data: {
                             'property': '<?= $partnersInfo['STATUS_PROPERTY_ID'] ?>',
                             'statuses': statuses.split(','),
@@ -294,10 +297,10 @@ if (!empty($partnersInfo['PARTNERS_REQUESTS']) && !empty($partnersInfo['STATUS_P
                         method: 'POST',
                         dataType: 'json',
                         onsuccess: function(data){
-                            if (data.success) {
+                            if (data && data.success) {
                                 location.href = link.getAttribute('href');
                             } else {
-                                console.log(data.error);
+                                console.error('Ошибка ответа', data);
                             }
                         },
                         onfailure: function(error){

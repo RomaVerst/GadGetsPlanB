@@ -4,12 +4,11 @@ require_once($_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_be
 use \Bitrix\Main\Localization\Loc;
 use Bitrix\Main\Application;
 
-if (!isset($_SERVER['HTTP_X_REQUESTED_WITH']) && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) &&
-    strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
+$request = Application::getInstance()->getContext()->getRequest();
+
+if (!$request->isAjaxRequest()) {
     LocalRedirect('/');
 }
-
-$request = Application::getInstance()->getContext()->getRequest();
 
 $data = $request->getPostList();
 $propertyId = (int)$data->get('property') ?? 0;
@@ -46,4 +45,5 @@ if (!empty($propertyId) && !empty($iblockId) && !empty($type) && !empty($statuse
     $result = ['success' => 0, 'error' => Loc::getMessage('PB_GADGETS_AJAX_ERROR_PARAMETERS')];
 }
 
+header('Content-Type: application/json; charset=utf-8');
 echo json_encode($result, JSON_UNESCAPED_UNICODE);
